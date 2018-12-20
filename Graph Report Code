@@ -1,0 +1,135 @@
+def month_name(date):
+    m_name = ' '
+    if date == 1: m_name = 'January'
+    if date == 2: m_name = 'February'
+    if date == 3: m_name = 'March'
+    if date == 4: m_name = 'April'
+    if date == 5: m_name = 'May'
+    if date == 6: m_name = 'June'
+    if date == 7: m_name = 'July'
+    if date == 8: m_name = 'August'
+    if date == 9: m_name = 'September'
+    if date == 10: m_name = 'October'
+    if date == 11: m_name = 'November'
+    if date == 12: m_name = 'December'
+    return m_name
+
+
+def date_extract(date):
+    parts = date.split('-')
+    return int(parts[0]), int(parts[1])
+
+
+def create_index_mapping(year, month, end_year, end_month):
+    index_mapping = {}
+    index = 0
+    while year <= end_year:
+        while True:
+            index_mapping[(year, month)] = index
+            index += 1
+            month += 1
+            if year == end_year and month > end_month:
+                break
+            if month > 12:
+                month = 1
+                break
+        year += 1
+    return index_mapping
+
+
+def create_x_axis(year, month, end_year, end_month):
+    x_axis_values_list = []
+    while year <= end_year:
+        while True:
+            full_date = month_name(month) + '-' + str(year)
+            x_axis_values_list.append(full_date)
+            month += 1
+            if year == end_year and month > end_month:
+                break
+            if month > 12:
+                month = 1
+                break
+        year += 1
+    return x_axis_values_list
+
+
+def make_graph_data(start_date, end_date, transactions):
+    start_year, start_month = date_extract(start_date)
+    end_year, end_month = date_extract(end_date)
+    index_mapping = create_index_mapping(start_year, start_month, end_year, end_month)
+    amount_value_list = [Decimal(0.0)] * len(index_mapping)
+    for t in transactions:
+        amount_value_list[index_mapping[date_extract(t[0])]] += t[1]
+    x_axis_values_list = create_x_axis(start_year, start_month, end_year, end_month)
+
+    return x_axis_values_list, amount_value_list
+from bokeh.resources import INLINE
+
+# report
+@report('graph.html')
+def graph_report(accounting, filters={}):
+    accounting = blm.accounting.Accounting._query(id=accounting).run()
+    numbers = []
+    if 'accounts' in filters:
+        numbers = parse_range(filters['accounts'], npat=r'\d{4}')
+    report_result = blm.accounting.main_ledger_report(accounting, numbers)
+    s = []
+    account_start_date = accounting[0].start[0][0:7]
+    account_end_date = accounting[0].end[0][0:7]
+    legend = 'General Report'
+    for r in report_result:
+        total = r.opening_balance[0]
+        thousand_sep(total)
+        rtotal = RunningTotals(r.transactions, r.opening_balance[0])
+        for t in rtotal:
+            x = ['0', '0']
+            if 'accounts' in filters:
+                legend = 'Account Number: '+str(r.number[0])
+                x[0] = t.verification[0].transaction_date[0][0:10]
+                x[1] = t.amount[0]
+                s.append(x)
+            else:
+                if t.amount[0] > 0:
+                    x[0] = t.verification[0].transaction_date[0][0:10]
+                    x[1] = t.amount[0]
+                    s.append(x)
+
+    graph_data = make_graph_data(account_start_date, account_end_date, s)
+
+    template = jinja2.Template("""
+    <!DOCTYPE html>
+    <html lang="en-US">
+
+    <link
+        href="https://cdn.pydata.org/bokeh/release/bokeh-0.13.0.min.css"
+        rel="stylesheet" type="text/css"
+    >
+    <script 
+        src="https://cdn.pydata.org/bokeh/release/bokeh-0.13.0.min.js"
+    ></script>
+
+    <body>
+
+        <h1>Hello Bokeh!</h1>
+
+        <p> Below is a simple plot of stock closing prices </p>
+
+        {{ script }}
+
+        {{ div }}
+
+    </body>
+
+    </html>
+    """)
+
+    plot = figure(x_range=graph_data[0],plot_height=400, width=1200, title=legend, toolbar_location="above")
+    plot.vbar(x=graph_data[0], top=graph_data[1], color="red", width=0.5, bottom=0)
+    plot.legend.location = "top_left"
+    plot.title.text_color = "red"
+    plot.ygrid.band_fill_color = "olive"
+    plot.ygrid.band_fill_alpha = 0.1
+    
+    script, div = components(plot, INLINE)
+
+    return template.render(script=script, div=div) 
